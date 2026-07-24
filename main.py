@@ -121,9 +121,16 @@ def call_llm(prompt):
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Authorization", f"Bearer {DEEPSEEK_API_KEY}")
     req.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    return data["choices"][0]["message"]["content"]
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        if not content:
+            print(f"[警告] DeepSeek返回空内容，完整响应: {json.dumps(data, ensure_ascii=False)[:300]}")
+        return content
+    except Exception as e:
+        print(f"[错误] DeepSeek API调用失败: {e}")
+        return ""
 
 def generate_report(hn_stories, github_repos, arxiv_papers):
     """用DeepSeek生成中文早报"""
@@ -209,6 +216,18 @@ def main():
 
     print("[4/5] DeepSeek生成早报...")
     report = generate_report(hn_stories, github_repos, arxiv_papers)
+    if not report:
+        print("  [fallback] DeepSeek返回空，使用原始数据拼接")
+        report = "### 今日AI大事件\n\n"
+        for s in hn_stories[:5]:
+            report += f"- **{s['title']}** (热度:{s['score']})\n  {s['url']}\n\n"
+        report += "### GitHub新星\n\n"
+        for r in github_repos[:3]:
+            report += f"- **{r['name']}** (stars:{r['stars']}, {r['language']})\n  {r['desc'][:80]}\n  {r['url']}\n\n"
+        report += "### 学术前沿\n\n"
+        for p in arxiv_papers[:3]:
+            report += f"- **{p['title']}**\n  {p['summary'][:80]}\n  {p['url']}\n\n"
+        report += "### 一句话点评\n\n> (AI分析暂不可用，以上为原始数据)"
     print("  早报生成完���")
 
     content = f"""## ☀️ 每日AI早报 ({today})
