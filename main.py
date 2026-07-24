@@ -80,6 +80,33 @@ def fetch_github_trending():
         print(f"[GitHub获取失败] {e}")
         return []
 
+def fetch_arxiv():
+    """从arXiv获取最新AI论文"""
+    import xml.etree.ElementTree as ET
+    try:
+        url = "https://export.arxiv.org/api/query?search_query=cat:cs.AI+OR+cat:cs.CL+OR+cat:cs.LG&sortBy=submittedDate&sortOrder=descending&max_results=10"
+        req = urllib.request.Request(url, method="GET")
+        req.add_header("User-Agent", "AI-Daily-Bot/1.0")
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            xml_data = resp.read().decode("utf-8")
+        root = ET.fromstring(xml_data)
+        ns = {"atom": "http://www.w3.org/2005/Atom"}
+        papers = []
+        for entry in root.findall("atom:entry", ns):
+            title = entry.find("atom:title", ns)
+            summary = entry.find("atom:summary", ns)
+            link = entry.find("atom:id", ns)
+            if title is not None:
+                papers.append({
+                    "title": " ".join(title.text.split()),
+                    "summary": " ".join((summary.text or "").split())[:200] if summary is not None else "",
+                    "url": link.text.strip() if link is not None else ""
+                })
+        return papers[:5]
+    except Exception as e:
+        print(f"[arXiv获取失败] {e}")
+        return []
+
 def call_llm(prompt):
     url = f"{DEEPSEEK_BASE_URL}/chat/completions"
     body = json.dumps({
@@ -98,7 +125,7 @@ def call_llm(prompt):
         data = json.loads(resp.read().decode("utf-8"))
     return data["choices"][0]["message"]["content"]
 
-def generate_report(hn_stories, github_repos):
+def generate_report(hn_stories, github_repos, arxiv_papers):
     """用DeepSeek生成中文早报"""
     hn_text = "\n".join(
         f"- {s['title']} (热度:{s['score']}, 评论:{s['comments']})\n  {s['url']}"
@@ -110,13 +137,21 @@ def generate_report(hn_stories, github_repos):
         for r in github_repos
     ) if github_repos else "今日无新热门AI项目"
 
+    arxiv_text = "\n".join(
+        f"- {p['title']}\n  {p['summary'][:100]}\n  {p['url']}"
+        for p in arxiv_papers
+    ) if arxiv_papers else "今日无新论文"
+
     prompt = f"""以下是今日AI领域的动态，请用中文生成一份简洁的AI早报。
 
-## Hacker News AI热门
+## Hacker News AI热门（技术社区讨论）
 {hn_text}
 
-## GitHub 新热门AI项目
+## GitHub 新热门AI项目（开源动态）
 {gh_text}
+
+## arXiv 最新AI论文（学术前沿）
+{arxiv_text}
 
 请按以下格式输出（用Markdown）：
 
@@ -126,13 +161,16 @@ def generate_report(hn_stories, github_repos):
 ### GitHub新星
 （挑选2-3个最值得关注的，用1句话说明它是什么、为什么值得关注）
 
+### 学术前沿
+（挑选2-3篇最重要的论文，用1句话说明研究什么、为什么重要）
+
 ### 一句话点评
 （用一句话总结今天的AI动态趋势）
 
 注意：
 - 中文概括，不要直接翻译英文标题
 - 突出"为什么重要"，不要只说"发生了什么"
-- 保持简洁，总字数控制在800字以内"""
+- 保持简洁，总字数控制在1000字以内"""
 
     return call_llm(prompt)
 
@@ -157,16 +195,20 @@ def main():
     today = datetime.now().strftime("%Y-%m-%d")
     print(f"=== 每日AI早报 {today} ===")
 
-    print("[1/4] 获取Hacker News...")
+    print("[1/5] 获取Hacker News...")
     hn_stories = fetch_hackernews()
     print(f"  获取到 {len(hn_stories)} 条AI相关故事")
 
-    print("[2/4] 获取GitHub热门AI项目...")
+    print("[2/5] 获取GitHub热门AI项目...")
     github_repos = fetch_github_trending()
     print(f"  获取到 {len(github_repos)} 个热门项目")
 
-    print("[3/4] DeepSeek生成早报...")
-    report = generate_report(hn_stories, github_repos)
+    print("[3/5] 获取arXiv最新AI论文...")
+    arxiv_papers = fetch_arxiv()
+    print(f"  获取到 {len(arxiv_papers)} 篇论文")
+
+    print("[4/5] DeepSeek生成早报...")
+    report = generate_report(hn_stories, github_repos, arxiv_papers)
     print("  早报生成完���")
 
     content = f"""## ☀️ 每日AI早报 ({today})
@@ -180,7 +222,7 @@ def main():
 > [GitHub](https://github.com/Equinox7379/gongkao-daily)
 """
 
-    print("[4/4] 推送到微信...")
+    print("[5/5] 推送到微信...")
     push_to_wechat(f"AI早报 {today}", content)
 
     output_dir = "output"
