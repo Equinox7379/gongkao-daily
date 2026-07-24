@@ -1,0 +1,19 @@
+name: 墨墨数据周报
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'  # 北京时间周一10:00
+  workflow_dispatch:
+
+jobs:
+  maimemo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python maimemo_weekly.py
+        env:
+          MAIMEMO_TOKEN: ${{ secrets.MAIMEMO_TOKEN }}
+          SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
