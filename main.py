@@ -1,33 +1,94 @@
 # -*- coding: utf-8 -*-
 """
-每日考公真题 AI分析 微信推送
-- 从华图教育爬取每日一练（失败则AI生成模拟题）
-- DeepSeek分析：解析+答案+知识点
-- Server酱推送到微信
+每日AI早报 微信推送
+- Hacker News API 获取今日Top故事（筛选AI相关）
+- GitHub API 获取今日热门AI项目
+- DeepSeek总结成中文早报
+- Server酱推送到微���
 """
 import os
 import json
 import urllib.request
 import urllib.parse
-import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
-# 配置
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 DEEPSEEK_MODEL = "deepseek-v4-pro"
 SERVERCHAN_KEY = os.environ.get("SERVERCHAN_KEY", "")
 
-def call_llm(prompt, system="你是一位资深的公务员考试辅导老师，擅长行测和申论。"):
-    """调用DeepSeek API"""
+AI_KEYWORDS = ["ai", "llm", "gpt", "ml", "model", "agent", "neural", "transformer",
+               "openai", "anthropic", "claude", "gemini", "diffusion", "rag",
+               "embedding", "fine-tun", "training", "inference", "quantiz",
+               "language model", "machine learning", "deep learning", "computer vision",
+               "generative", "multimodal", "robot", "autonomous", "chip", "gpu",
+               "nvidia", "tesla", "copilot", "cursor", "coding", "automation"]
+
+def api_get(url, headers=None):
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("User-Agent", "AI-Daily-Bot/1.0")
+    if headers:
+        for k, v in headers.items():
+            req.add_header(k, v)
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+def fetch_hackernews():
+    """从Hacker News获取今日Top AI相关故事"""
+    try:
+        top_ids = api_get("https://hacker-news.firebaseio.com/v0/topstories.json")[:50]
+        stories = []
+        for sid in top_ids:
+            try:
+                item = api_get(f"https://hacker-news.firebaseio.com/v0/item/{sid}.json")
+                if item and item.get("type") == "story" and item.get("score", 0) >= 50:
+                    title = item.get("title", "").lower()
+                    if any(kw in title for kw in AI_KEYWORDS):
+                        stories.append({
+                            "title": item["title"],
+                            "url": item.get("url", f"https://news.ycombinator.com/item?id={sid}"),
+                            "score": item["score"],
+                            "comments": item.get("descendants", 0)
+                        })
+            except:
+                continue
+            if len(stories) >= 10:
+                break
+        return stories
+    except Exception as e:
+        print(f"[HN获取失败] {e}")
+        return []
+
+def fetch_github_trending():
+    """从GitHub获取今日热门AI项目"""
+    try:
+        yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+        url = (f"https://api.github.com/search/repositories"
+               f"?q=topic:ai+created:>{yesterday}&sort=stars&order=desc&per_page=10")
+        data = api_get(url, headers={"Accept": "application/vnd.github.v3+json"})
+        repos = []
+        for r in data.get("items", [])[:5]:
+            repos.append({
+                "name": r["full_name"],
+                "desc": r.get("description", "") or "",
+                "stars": r["stargazers_count"],
+                "url": r["html_url"],
+                "language": r.get("language", "") or ""
+            })
+        return repos
+    except Exception as e:
+        print(f"[GitHub获取失败] {e}")
+        return []
+
+def call_llm(prompt):
     url = f"{DEEPSEEK_BASE_URL}/chat/completions"
     body = json.dumps({
         "model": DEEPSEEK_MODEL,
         "messages": [
-            {"role": "system", "content": system},
+            {"role": "system", "content": "你是一位AI行业分析师，擅长用简洁的中文总结技术动态。"},
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.7,
+        "temperature": 0.5,
         "max_tokens": 2000
     }).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST")
@@ -37,84 +98,51 @@ def call_llm(prompt, system="你是一位资深的公务员考试辅导老师，
         data = json.loads(resp.read().decode("utf-8"))
     return data["choices"][0]["message"]["content"]
 
-def fetch_question_from_web():
-    """尝试从华图教育爬取每日一练"""
-    try:
-        url = "https://www.huatu.com/news/lianxi/"
-        req = urllib.request.Request(url, method="GET")
-        req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            html = resp.read().decode("utf-8", errors="ignore")
-        # 提取题目链接
-        links = re.findall(r'href="(https?://www\.huatu\.com/[^"]*\d{4}[^"]*)"[^>]*>([^<]*(?:练习|真题|每日|行测|申论)[^<]*)</a>', html)
-        if links:
-            # 访问第一个链接获取题目
-            article_url, title = links[0]
-            req2 = urllib.request.Request(article_url, method="GET")
-            req2.add_header("User-Agent", "Mozilla/5.0")
-            with urllib.request.urlopen(req2, timeout=15) as resp2:
-                article_html = resp2.read().decode("utf-8", errors="ignore")
-            # 提取正文
-            content_match = re.search(r'<div[^>]*class="[^"]*content[^"]*"[^>]*>(.*?)</div>', article_html, re.DOTALL)
-            if content_match:
-                content = re.sub(r'<[^>]+>', '\n', content_match.group(1))
-                content = re.sub(r'\n{3,}', '\n\n', content).strip()
-                if len(content) > 50:
-                    return title.strip(), content[:3000]
-        return None, None
-    except Exception as e:
-        print(f"[爬取失败] {e}")
-        return None, None
+def generate_report(hn_stories, github_repos):
+    """用DeepSeek生成中文早报"""
+    hn_text = "\n".join(
+        f"- {s['title']} (热度:{s['score']}, 评论:{s['comments']})\n  {s['url']}"
+        for s in hn_stories
+    ) if hn_stories else "今日无AI相关热门故事"
 
-def generate_question():
-    """AI生成一道考公模拟题"""
-    subjects = [
-        "言语理解与表达", "数量关系", "判断推理", "资料分析", "常识判断",
-        "申论：归纳概括", "申论：提出对策", "申论：综合分析"
-    ]
-    import random
-    subject = random.choice(subjects)
-    
-    prompt = f"""请出一道{subject}的公务员考试真题级别的模拟题。要求：
-1. 题目难度接近真实考试
-2. 如果是行测题，给出A/B/C/D四个选项
-3. 如果是申论题，给出材料和要求
-4. 只出题目，不要给答案和解析
+    gh_text = "\n".join(
+        f"- {r['name']} (⭐{r['stars']}, {r['language']})\n  {r['desc'][:100]}\n  {r['url']}"
+        for r in github_repos
+    ) if github_repos else "今日无新热门AI项目"
 
-格式：
-【题目】{subject}
-[题目内容]"""
-    
-    question = call_llm(prompt)
-    return f"AI模拟题 - {subject}", question
+    prompt = f"""以下是今日AI领域的动态，请用中文生成一份简洁的AI早报。
 
-def analyze_question(title, question):
-    """用DeepSeek分析题目"""
-    prompt = f"""请分析以下公务员考试题目，给出详细的解析：
+## Hacker News AI热门
+{hn_text}
 
-{question}
+## GitHub 新热门AI项目
+{gh_text}
 
-请按以下格式输出：
-【参考答案】给出正确答案
-【解析】详细解释为什么选这个答案，其他选项为什么不对
-【知识点】这道题考查的核心知识点（1-2句话）
-【备考建议】针对这个知识点的备考建议（1句话）"""
-    
+请按以下格式输出（用Markdown）：
+
+### 今日AI大事件
+（挑选3-5条最重要的，用1-2句话中文概括每条的核心内容，附原文链接）
+
+### GitHub新星
+（挑选2-3个最值得关注的，用1句话说明它是什么、为什么值得关注）
+
+### 一句话点评
+（用一句话总结今天的AI动态趋势）
+
+注意：
+- 中文概括，不要直接翻译英文标题
+- 突出"为什么重要"，不要只说"发生了什么"
+- 保持简洁，总字数控制在800字以内"""
+
     return call_llm(prompt)
 
 def push_to_wechat(title, content):
-    """通过Server酱推送到微信"""
     if not SERVERCHAN_KEY:
-        print("[推送] SERVERCHAN_KEY未配置，跳过推送")
-        print(f"\n标题: {title}")
-        print(f"\n内容:\n{content[:500]}")
+        print("[推送] SERVERCHAN_KEY未配置")
+        print(f"\n{title}\n\n{content[:500]}")
         return False
-    
     url = f"https://sctapi.ftqq.com/{SERVERCHAN_KEY}.send"
-    data = urllib.parse.urlencode({
-        "title": title,
-        "desp": content
-    }).encode("utf-8")
+    data = urllib.parse.urlencode({"title": title, "desp": content}).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")
     with urllib.request.urlopen(req, timeout=15) as resp:
         result = json.loads(resp.read().decode("utf-8"))
@@ -127,59 +155,39 @@ def push_to_wechat(title, content):
 
 def main():
     today = datetime.now().strftime("%Y-%m-%d")
-    print(f"=== 每日考公真题 {today} ===")
-    
-    # 1. 获取题目
-    print("[步骤1] 获取题目...")
-    title, question = fetch_question_from_web()
-    source = "华图教育"
-    
-    if not question:
-        print("[步骤1] 爬取失败，使用AI生成模拟题")
-        title, question = generate_question()
-        source = "AI模拟"
-    
-    print(f"[步骤1] 题目来源: {source}")
-    print(f"[步骤1] 标题: {title}")
-    
-    # 2. 分析题目
-    print("[步骤2] AI分析中...")
-    analysis = analyze_question(title, question)
-    print("[步骤2] 分析完成")
-    
-    # 3. 组装内容
-    content = f"""## 📝 每日考公真题 ({today})
+    print(f"=== 每日AI早报 {today} ===")
 
-**来源**: {source}
+    print("[1/4] 获取Hacker News...")
+    hn_stories = fetch_hackernews()
+    print(f"  获取到 {len(hn_stories)} 条AI相关故事")
+
+    print("[2/4] 获取GitHub热门AI项目...")
+    github_repos = fetch_github_trending()
+    print(f"  获取到 {len(github_repos)} 个热门项目")
+
+    print("[3/4] DeepSeek生成早报...")
+    report = generate_report(hn_stories, github_repos)
+    print("  早报生成完���")
+
+    content = f"""## ☀️ 每日AI早报 ({today})
+
+{report}
 
 ---
 
-### {title}
-
-{question}
-
----
-
-### 📖 AI解析
-
-{analysis}
-
----
-
-> 每天进步一点，上岸不是梦。
-> Powered by DeepSeek V4 Pro | [GitHub](https://github.com/Equinox7379/gongkao-daily)
+> 数据来源：Hacker News + GitHub Trending
+> Powered by DeepSeek V4 Pro
+> [GitHub](https://github.com/Equinox7379/gongkao-daily)
 """
-    
-    # 4. 推送
-    print("[步骤3] 推送到微信...")
-    push_to_wechat(f"考公每日一题 {today}", content)
-    
-    # 5. 保存到文件（GitHub Actions会自动commit）
+
+    print("[4/4] 推送到微信...")
+    push_to_wechat(f"AI早报 {today}", content)
+
     output_dir = "output"
     os.makedirs(output_dir, exist_ok=True)
     with open(f"{output_dir}/{today}.md", "w", encoding="utf-8") as f:
         f.write(content)
-    print(f"[步骤4] 已保存到 output/{today}.md")
+    print(f"[完成] 已保存到 output/{today}.md")
 
 if __name__ == "__main__":
     main()
