@@ -1,4 +1,4 @@
-name: 每日考公真题推送
+name: 每日AI早报推送
 
 on:
   schedule:
@@ -35,5 +35,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add output/
-          git diff --staged --quiet || git commit -m "每日考公真题 $(date -u +%Y-%m-%d)"
+          git diff --staged --quiet || git commit -m "每日AI早报 $(date -u +%Y-%m-%d)"
           git push
