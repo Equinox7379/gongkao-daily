@@ -175,11 +175,23 @@ def generate_report(hn_stories, github_repos, arxiv_papers):
 （用一句话总结今天的AI动态趋势）
 
 注意：
-- 中文概括，不要直接翻译英文标题
+- 全部用中文撰写，禁止使用英文句子。专有名词（如ChatGPT、Codex、GitHub、Hugging Face等）可保留英文
+- 项目名称如果是英文，用中文解释它的功能，不要只甩英文名
+- 论文标题如果是英文，用中文翻译标题并概括内容
 - 突出"为什么重要"，不要只说"发生了什么"
-- 保持简洁，总字数控制在1000字以内"""
+- 保持简洁，总字数控制在1000字以内
 
-    return call_llm(prompt)
+另外，请在输出最开头单独一行写出今日早报的标题，格式为：
+标题：XXX（至少15个字，用一句话概括今天最重要的AI动态）"""
+
+    report = call_llm(prompt)
+    # 从报告中提取标题
+    title_line = ""
+    if report and report.startswith("标题："):
+        lines = report.split('\n')
+        title_line = lines[0].replace("标题：", "").strip()
+        report = '\n'.join(lines[1:]).strip()
+    return report, title_line
 
 def push_to_wechat(title, content):
     if not SERVERCHAN_KEY:
@@ -215,7 +227,7 @@ def main():
     print(f"  获取到 {len(arxiv_papers)} 篇论文")
 
     print("[4/5] DeepSeek生成早报...")
-    report = generate_report(hn_stories, github_repos, arxiv_papers)
+    report, title_summary = generate_report(hn_stories, github_repos, arxiv_papers)
     if not report:
         print("  [fallback] DeepSeek返回空，使用原始数据拼接")
         report = "### 今日AI大事件\n\n"
@@ -228,9 +240,9 @@ def main():
         for p in arxiv_papers[:3]:
             report += f"- **{p['title']}**\n  {p['summary'][:80]}\n  {p['url']}\n\n"
         report += "### 一句话点评\n\n> (AI分析暂不可用，以上为原始数据)"
-    print("  早报生成完���")
+        title_summary = ""
 
-    content = f"""## ☀️ 每日AI早报 ({today})
+    content = f"""## 每日AI早报 ({today})
 
 {report}
 
@@ -242,7 +254,10 @@ def main():
 """
 
     print("[5/5] 推送到微信...")
-    push_to_wechat(f"AI早报 {today}", content)
+    push_title = f"AI早报 {today}"
+    if title_summary:
+        push_title = f"AI早报 | {title_summary}"
+    push_to_wechat(push_title, content)
 
     output_dir = "output"
     os.makedirs(output_dir, exist_ok=True)
