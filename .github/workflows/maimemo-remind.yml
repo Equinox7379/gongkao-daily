@@ -1,0 +1,18 @@
+name: 墨墨晚间提醒
+on:
+  schedule:
+    - cron: '13 0 * * *'  # 北京时间 21:00
+  workflow_dispatch:
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python maimemo_standalone.py remind
+        env:
+          MAIMEMO_TOKEN: ${{ secrets.MAIMEMO_TOKEN }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
