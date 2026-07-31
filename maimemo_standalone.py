@@ -64,18 +64,88 @@ def push(cfg, title, content):
     urllib.request.urlopen(urllib.request.Request(url), timeout=15).read()
 
 # ---------- 四个任务 ----------
+# ---------- 历史记忆（仓库 data/maimemo_history.json，让云端记得过去） ----------
+HISTORY = "data/maimemo_history.json"
+
+def load_history():
+    try:
+        with open(HISTORY, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_history(history):
+    import os as _os
+    _os.makedirs(_os.path.dirname(HISTORY), exist_ok=True)
+    with open(HISTORY, "w", encoding="utf-8") as f:
+        json.dump(history, f, ensure_ascii=False, indent=1)
+
+def streak_info(history, today):
+    """从历史算连续零进度天数 + 最后一次有进度的日期"""
+    zero_streak = 0
+    last_active = None
+    dates = sorted(history.keys(), reverse=True)
+    for d in dates:
+        if d >= today:
+            continue
+        if history[d].get("finished", 0) > 0:
+            last_active = d
+            break
+        zero_streak += 1
+    return zero_streak, last_active
+
+# ---------- DeepSeek 生成文案（风格：锋利/考据/对质/猫系，德冥 08-01 定） ----------
+STYLE_SYSTEM = (
+    "你是德冥的陪学助手小A，风格要求：锋利、考据、对质式（直接戳穿借口）、零套话、猫系（爱用喵）。"
+    "会用数据说话，会翻历史记录扎心，不哄人。生成中文文案，长度中等。"
+)
+
+def gen_progress_text(cfg, finished, total, minutes, remind, zero_streak, last_active, today):
+    if remind and zero_streak >= 1:
+        streak_txt = f"已经连续 {zero_streak + 1} 天零进度（含今天）" if zero_streak >= 1 else ""
+        last_txt = f"上一次背词是 {last_active}。"
+        user = (
+            f"今天是 {today}，墨墨进度：{finished}/{total} 词，学习时长 {minutes} 分钟。\n"
+            f"历史记录：{last_txt} 连续零进度天数（含今天）≈ {zero_streak + 1}。\n"
+            "请生成一条晚间催促提醒，要求：①开头猫emoji+直呼德冥 ②列今日刺眼数据 "
+            "③翻历史扎心（连续零进度、上次背词是什么时候）④点出后果（考公词库背不完）"
+            "⑤给明确行动指令（现在打开墨墨，哪怕10个）⑥结尾喵。参考语气示例："
+            "\"一个词都没背。我翻了记录——之后连续零进度已经成了常态。你知道这意味着什么吗？"
+            "不是今天忘了，是你压根没打开过这个app。现在，立刻，打开墨墨背单词。哪怕只背10个也比0强。别等我明天再来报这个0了。喵。\""
+        )
+    else:
+        user = (
+            f"今天是 {today}，墨墨进度：{finished}/{total} 词，学习时长 {minutes} 分钟。\n"
+            "请生成一条{'简短进度播报' if not remind else '温和提醒'}：数据+一句评价，"
+            "未完成就催一下（用猫系语气），完成就夸。不要太长。"
+        )
+    try:
+        return deepseek(cfg, STYLE_SYSTEM, user)
+    except Exception:
+        return None  # fallback 到简单文案
+
 def mode_progress(cfg, remind=False):
     d = maimemo(cfg, "/study/get_study_progress", {})
     p = d["data"]["progress"]
     finished, total = p["finished"], p["total"]
     minutes = p.get("study_time", 0) // 60000
+    today = time.strftime("%Y-%m-%d")
+    history = load_history()
+    zero_streak, last_active = streak_info(history, today)
     title = f"墨墨{'晚间' if remind else '每日'}进度：{finished}/{total}"
-    lines = [f"今日完成 {finished}/{total} 词，学习 {minutes} 分钟。"]
-    if finished < total:
-        lines.append("还没背完，现在去背还来得及。" if remind else "加油，把剩下的背完！")
-    else:
-        lines.append("今日全勤，干得好！")
-    push(cfg, title, "\n".join(lines))
+    text = gen_progress_text(cfg, finished, total, minutes, remind, zero_streak, last_active, today)
+    if text is None:
+        lines = [f"今日完成 {finished}/{total} 词，学习 {minutes} 分钟。"]
+        if finished < total:
+            lines.append("还没背完，现在去背还来得及。" if remind else "加油，把剩下的背完！")
+        else:
+            lines.append("今日全勤，干得好！")
+        text = "\n".join(lines)
+    push(cfg, title, text)
+    # 记录当天最终状态（晚间/遗忘词时点写历史，早报只读不写避免污染）
+    if remind:
+        history[today] = {"finished": finished, "total": total, "study_time": minutes * 60000}
+        save_history(history)
 
 def mode_track(cfg):
     items = maimemo(cfg, "/study/get_today_items", {"limit": 500})["data"]
