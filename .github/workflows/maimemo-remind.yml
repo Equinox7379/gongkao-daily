@@ -1,4 +1,6 @@
 name: 墨墨晚间提醒
+permissions:
+  contents: write
 on:
   schedule:
     - cron: '13 0 * * *'  # 北京时间 21:00
