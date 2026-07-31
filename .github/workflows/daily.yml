@@ -4,7 +4,6 @@ on:
   schedule:
     # 北京时间6:00和7:00双触发（GitHub Actions cron有延迟，提前触发确保8:00前推送）
     - cron: '0 22 * * *'
-    - cron: '0 23 * * *'
   workflow_dispatch: # 手动触发
 
 permissions:
